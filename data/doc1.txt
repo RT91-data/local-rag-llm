@@ -1,0 +1,2 @@
+LangChain is a Python library that helps build applications with large language models.
+It provides modules for document loading, text splitting, embeddings, and memory.
