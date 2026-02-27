@@ -1,43 +1,59 @@
+import os
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_chroma import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import ChatPromptTemplate
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.chains import create_retrieval_chain
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
 
-# 1. Load a PDF (Put any pdf in your folder and name it 'my_data.pdf')
-loader = PyPDFLoader("my_data.pdf")
-docs = loader.load()
+# Settings
+PDF_FILE_PATH = "my_data.pdf"
 
-# 2. Split the PDF into small chunks (AI can't read a whole book at once)
-text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-splits = text_splitter.split_documents(docs)
+def main():
+    if not os.path.exists(PDF_FILE_PATH):
+        print(f"Error: Put '{PDF_FILE_PATH}' in this folder first!")
+        return
 
-# 3. Create a "Vector Store" (The AI's temporary library)
-# This will pull 'nomic-embed-text' if you don't have it: ollama pull nomic-embed-text
-vectorstore = Chroma.from_documents(
-    documents=splits, 
-    embedding=OllamaEmbeddings(model="nomic-embed-text")
-)
+    print("--- 1. Loading & Splitting PDF ---")
+    loader = PyPDFLoader(PDF_FILE_PATH)
+    docs = loader.load()
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+    splits = text_splitter.split_documents(docs)
 
-# 4. Set up the Brain (Llama3)
-llm = ChatOllama(model="llama3")
+    print("--- 2. Creating Library (FAISS) ---")
+    embeddings = OllamaEmbeddings(model="nomic-embed-text")
+    vectorstore = FAISS.from_documents(documents=splits, embedding=embeddings)
+    retriever = vectorstore.as_retriever()
 
-# 5. Define how the AI should use the PDF context
-system_prompt = (
-    "Use the following pieces of retrieved context to answer the question. "
-    "If you don't know the answer, say you don't know.\n\n{context}"
-)
-prompt = ChatPromptTemplate.from_messages([
-    ("system", system_prompt),
-    ("human", "{input}"),
-])
+    print("--- 3. Setting up AI ---")
+    llm = ChatOllama(model="llama3")
+    
+    template = """Answer the question based only on the following context:
+    {context}
+    
+    Question: {question}
+    """
+    prompt = ChatPromptTemplate.from_template(template)
 
-# 6. Build the Chain
-question_answer_chain = create_stuff_documents_chain(llm, prompt)
-rag_chain = create_retrieval_chain(vectorstore.as_retriever(), question_answer_chain)
+    # This is the "Modern Style" that avoids the error you have
+    def format_docs(docs):
+        return "\n\n".join(doc.page_content for doc in docs)
 
-# 7. Ask a question!
-response = rag_chain.invoke({"input": "What is this document about?"})
-print(response["answer"])
+    rag_chain = (
+        {"context": retriever | format_docs, "question": RunnablePassthrough()}
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+
+    print("--- READY! ---")
+    while True:
+        query = input("\nAsk your PDF a question (or 'exit'): ")
+        if query.lower() == 'exit': break
+        
+        print("Searching and thinking...")
+        print("\nAI Answer:", rag_chain.invoke(query))
+
+if __name__ == "__main__":
+    main()
