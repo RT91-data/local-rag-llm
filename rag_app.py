@@ -22,21 +22,32 @@ def main():
     splits = text_splitter.split_documents(docs)
 
     print("--- 2. Creating Library (FAISS) ---")
+    # Note: Ensure you have run 'ollama pull nomic-embed-text'
     embeddings = OllamaEmbeddings(model="nomic-embed-text")
     vectorstore = FAISS.from_documents(documents=splits, embedding=embeddings)
     retriever = vectorstore.as_retriever()
 
     print("--- 3. Setting up AI ---")
-    llm = ChatOllama(model="llama3")
+    # Using llama3 or phi3 depending on your preference
+    llm = ChatOllama(model="llama3") 
     
-    template = """Answer the question based only on the following context:
+    # HYBRID PROMPT: Allows general chat + PDF analysis
+    template = """You are a helpful AI assistant.
+    
+    1. If the user greets you or asks general questions (e.g., "How are you?"), answer naturally using your general knowledge.
+    2. If the user asks about the document, use the context provided below to answer accurately.
+    3. If the answer isn't in the context but relates to the document's topic, you may use your general knowledge but mention that the document doesn't explicitly state it.
+
+    CONTEXT:
     {context}
     
-    Question: {question}
-    """
+    QUESTION: 
+    {question}
+    
+    ANSWER:"""
+    
     prompt = ChatPromptTemplate.from_template(template)
 
-    # This is the "Modern Style" that avoids the error you have
     def format_docs(docs):
         return "\n\n".join(doc.page_content for doc in docs)
 
@@ -49,11 +60,13 @@ def main():
 
     print("--- READY! ---")
     while True:
-        query = input("\nAsk your PDF a question (or 'exit'): ")
+        query = input("\nAsk (or 'exit'): ")
         if query.lower() == 'exit': break
         
-        print("Searching and thinking...")
-        print("\nAI Answer:", rag_chain.invoke(query))
+        print("Thinking...")
+        # We use invoke to get the full answer for the console version
+        response = rag_chain.invoke(query)
+        print("\nAI Answer:", response)
 
 if __name__ == "__main__":
     main()
