@@ -1,5 +1,13 @@
-venv/
+# Python stuff
 __pycache__/
-chroma_db/
+*.py[cod]
+venv/
+venv_stable/
+
+# RAG specific - DO NOT PUSH THESE
+faiss_index_storage/
+temp_uploads/
 *.pdf
+
+# Environment variables
 .env
