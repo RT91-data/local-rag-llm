@@ -11,3 +11,8 @@ temp_uploads/
 
 # Environment variables
 .env
+.env
+faiss_index_storage/
+temp_uploads/
+__pycache__/
+*.pyc
