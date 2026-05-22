@@ -1,0 +1,11 @@
+streamlit
+langchain
+langchain-ollama
+langchain-community
+langchain-classic
+langchain-text-splitters
+faiss-cpu
+rank_bm25
+pdfplumber
+python-dotenv
+anthropic
