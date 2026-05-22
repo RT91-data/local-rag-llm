@@ -1,6 +1,6 @@
 # 🤖 Local RAG LLM — AI Document Assistant
 
-A production-grade **Retrieval Augmented Generation (RAG)** application that lets you chat with your PDF documents using hybrid search and Claude AI. Built with Python, LangChain, FAISS, and Streamlit.
+A **Retrieval Augmented Generation (RAG)** application that lets you chat with your PDF documents using hybrid search and Claude AI. Built with Python, LangChain, FAISS, and Streamlit.
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.54-red)
@@ -78,8 +78,7 @@ cd local-rag-llm
 ### 2. Install dependencies
 
 ```bash
-pip install streamlit langchain langchain-ollama langchain-community langchain-classic
-pip install langchain-text-splitters faiss-cpu rank_bm25 pdfplumber python-dotenv anthropic
+pip install -r requirements.txt
 ```
 
 ### 3. Pull the embedding model
@@ -123,17 +122,13 @@ Open your browser at `http://localhost:8501`
 ```
 local-rag-llm/
 ├── app.py                  # Main Streamlit application
-├── advanced_rag.py         # Advanced RAG pipeline (CLI version)
-├── main.py                 # Entry point
-├── rag_app.py              # Alternative RAG implementation
-├── test_pdf.py             # PDF extraction test utility
-├── create_pdf.py           # Test PDF generator
+├── requirements.txt        # Python dependencies
+├── interview_prep.md       # RAG interview Q&A guide
 ├── start_ai.bat            # Windows startup script
 ├── data/                   # Sample documents
 ├── .env                    # API keys (not committed)
 ├── .gitignore
-├── README.md
-└── INTERVIEW_PREP.md       # RAG interview Q&A guide
+└── README.md
 ```
 
 ---
@@ -161,7 +156,6 @@ Re-indexing 50+ page documents on every app restart would take minutes. Saving t
 - [ ] Implement RAGAs for automated quality evaluation
 - [ ] Add query expansion for better recall
 - [ ] Support for Word documents (.docx) and web URLs
-- [ ] Multi-user support with document isolation
 - [ ] Deploy to Streamlit Cloud
 
 ---
@@ -175,13 +169,6 @@ Re-indexing 50+ page documents on every app restart would take minutes. Saving t
 | Retrieval k | 4 chunks per query |
 | Embedding model | nomic-embed-text (274MB) |
 | Supported file types | PDF |
-| Max document size | Limited by available RAM |
-
----
-
-## 🤝 Contributing
-
-Pull requests welcome! For major changes, please open an issue first.
 
 ---
 
@@ -198,4 +185,4 @@ MIT License — feel free to use and modify.
 
 ---
 
-*Built as part of a 9-month AI upskilling journey — May 2026*
+*Built as part of a 6-month AI upskilling journey — 2026*
