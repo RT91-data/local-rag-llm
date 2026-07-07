@@ -124,7 +124,6 @@ local-rag-llm/
 ├── app.py                  # Main Streamlit application
 ├── requirements.txt        # Python dependencies
 ├── interview_prep.md       # RAG interview Q&A guide
-├── start_ai.bat            # Windows startup script
 ├── data/                   # Sample documents
 ├── .env                    # API keys (not committed)
 ├── .gitignore
