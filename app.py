@@ -3,6 +3,7 @@ import os
 import shutil
 import json
 import re
+import uuid
 import pdfplumber
 from dotenv import load_dotenv
 from anthropic import Anthropic
@@ -13,6 +14,8 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.retrievers import BM25Retriever
 from langchain_classic.retrievers import EnsembleRetriever
 from sentence_transformers import CrossEncoder
+import time 
+from observability import start_trace, log_span, log_generation, end_trace, get_langfuse
 
 # --- LOAD ENV ---
 load_dotenv()
@@ -20,6 +23,8 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 # --- CONFIG ---
 st.set_page_config(page_title="Rupam's AI Assistant", layout="wide")
+# Initialize observability
+get_langfuse()
 INDEX_DIR = "faiss_index_storage"
 UPLOAD_DIR = "temp_uploads"
 SIMILARITY_THRESHOLD = 0.3
@@ -37,6 +42,8 @@ if "faiss_vectorstore" not in st.session_state:
     st.session_state.faiss_vectorstore = None
 if "conversation_summary" not in st.session_state:
     st.session_state.conversation_summary = ""
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
 
 st.title("🤖 Rupam's AI Assistant")
 
@@ -598,8 +605,21 @@ for msg in st.session_state.messages:
 
 if query := st.chat_input("Ask me anything..."):
 
+    # ── TRACE START ──────────────────────────────────────────────
+    trace, total_start = start_trace(
+        query,
+        session_id=st.session_state.session_id
+    )
+
     # ── LAYER 2: INPUT GUARDRAIL ──
+    t0 = time.time()
     safety_check = check_input_safety(query)
+    t1 = time.time()
+    log_span(trace, "security-input-guardrail",
+             input_data={"query": query},
+             output_data={"safe": safety_check.get("safe"), "reason": safety_check.get("reason")},
+             start_time=t0, end_time=t1)
+
     if not safety_check.get("safe", True):
         with st.chat_message("assistant"):
             st.warning(
@@ -615,18 +635,31 @@ if query := st.chat_input("Ask me anything..."):
     with st.chat_message("assistant"):
 
         # ── QUERY REWRITING ──
+        t0 = time.time()
         rewritten_query = rewrite_query_for_retrieval(
             query, st.session_state.messages[:-1]
         )
+        t1 = time.time()
+        log_span(trace, "query-rewriting",
+                 input_data={"query": query},
+                 output_data={"rewritten": rewritten_query,
+                              "changed": query != rewritten_query},
+                 start_time=t0, end_time=t1)
+
         if rewritten_query != query:
             st.caption(f"🔍 Searching for: *{rewritten_query}*")
 
         # ── RETRIEVAL: THRESHOLD + RERANKING ──
         context = ""
         docs = []
+        chunks_retrieved = 0
+        junk_count = 0
 
         if st.session_state.retriever:
             if st.session_state.faiss_vectorstore:
+
+                # FAISS + BM25 retrieval
+                t0 = time.time()
                 faiss_docs = retrieve_with_threshold(
                     st.session_state.faiss_vectorstore,
                     rewritten_query,
@@ -642,8 +675,27 @@ if query := st.chat_input("Ask me anything..."):
                     if content_key not in seen_content:
                         seen_content.add(content_key)
                         merged_docs.append(doc)
+                chunks_retrieved = len(merged_docs)
+                t1 = time.time()
+                log_span(trace, "retrieval",
+                         input_data={"query": rewritten_query, "faiss_k": 8},
+                         output_data={"faiss_hits": len(faiss_docs),
+                                      "bm25_hits": len(bm25_docs),
+                                      "merged": chunks_retrieved},
+                         start_time=t0, end_time=t1,
+                         metadata={"similarity_threshold": SIMILARITY_THRESHOLD})
 
+                # CrossEncoder reranking
+                t0 = time.time()
                 docs = rerank_chunks(rewritten_query, merged_docs, top_k=4)
+                t1 = time.time()
+                rerank_scores = [round(float(d.metadata.get("rerank_score", 0)), 3)
+                                 for d in docs]
+                log_span(trace, "reranking",
+                         input_data={"candidates": chunks_retrieved},
+                         output_data={"kept": len(docs), "scores": rerank_scores},
+                         start_time=t0, end_time=t1,
+                         metadata={"model": "cross-encoder/ms-marco-MiniLM-L-6-v2"})
             else:
                 docs = st.session_state.retriever.invoke(rewritten_query)
 
@@ -663,8 +715,6 @@ if query := st.chat_input("Ask me anything..."):
                 )
 
         # ── BUILD SYSTEM PROMPT WITH CONVERSATION SUMMARY ──
-        # Conversation summary from older messages is injected here
-        # so the model has full context even after the sliding window trims history
         summary_context = ""
         if st.session_state.conversation_summary:
             summary_context = (
@@ -701,6 +751,7 @@ Do not invent information not present in the context.{summary_context}"""
         # ── STREAM RESPONSE ──
         response_text = ""
         placeholder = st.empty()
+        gen_start = time.time()
 
         with claude.messages.stream(
             model=model_name,
@@ -711,11 +762,37 @@ Do not invent information not present in the context.{summary_context}"""
             for text in stream.text_stream:
                 response_text += text
                 placeholder.markdown(response_text + "▌")
+            # Capture token usage from final message
+            final_msg = stream.get_final_message()
+            input_tokens  = final_msg.usage.input_tokens
+            output_tokens = final_msg.usage.output_tokens
 
+        gen_end = time.time()
         placeholder.markdown(response_text)
 
+        # Log generation span
+        log_generation(
+            trace,
+            query=query,
+            context=context,
+            answer=response_text,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            start_time=gen_start,
+            end_time=gen_end,
+            model=model_name,
+        )
+
         # ── LAYER 3: OUTPUT VALIDATION ──
+        t0 = time.time()
         output_check = validate_output(response_text)
+        t1 = time.time()
+        log_span(trace, "security-output-validation",
+                 input_data={"answer_length": len(response_text)},
+                 output_data={"safe": output_check.get("safe"),
+                              "reason": output_check.get("reason")},
+                 start_time=t0, end_time=t1)
+
         if not output_check.get("safe", True):
             placeholder.warning(
                 f"⚠️ Response blocked by output filter: {output_check.get('reason')}"
@@ -736,16 +813,27 @@ Do not invent information not present in the context.{summary_context}"""
                     rerank = doc.metadata.get("rerank_score", "N/A")
                     st.caption(f"📄 {source} (p.{page}) — relevance: {rerank}")
 
+        # ── END TRACE ────────────────────────────────────────────
+        end_trace(
+            trace=trace,
+            answer=response_text,
+            sources=[d.metadata for d in docs],
+            query=query,
+            rewritten_query=rewritten_query,
+            total_start=total_start,
+            chunks_retrieved=chunks_retrieved,
+            chunks_after_rerank=len(docs),
+            junk_filtered=junk_count,
+            input_tokens=input_tokens if st.session_state.retriever else 0,
+            output_tokens=output_tokens if st.session_state.retriever else 0,
+        )
+
     st.session_state.messages.append({
         "role": "assistant",
         "content": response_text
     })
 
     # ── CONVERSATION SUMMARIZATION + SLIDING WINDOW ──
-    # Runs after every message to keep history manageable.
-    # When history exceeds MAX_HISTORY_MESSAGES, oldest messages
-    # are summarized and stored in session_state.conversation_summary
-    # rather than dropped entirely.
     st.session_state.messages, st.session_state.conversation_summary = \
         manage_conversation_history(
             st.session_state.messages,
